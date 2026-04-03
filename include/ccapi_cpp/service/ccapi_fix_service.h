@@ -199,6 +199,12 @@ class FixService : public Service {
 
     std::visit(
         [&](auto& streamPtr) {
+          beast::get_lowest_layer(*streamPtr).socket().set_option(tcp::no_delay(true));
+        },
+        fixConnectionPtr->streamPtr);
+
+    std::visit(
+        [&](auto& streamPtr) {
           using StreamType = std::decay_t<decltype(*streamPtr)>;
           if constexpr (std::is_same_v<StreamType, beast::ssl_stream<beast::tcp_stream>>) {
             CCAPI_LOGGER_TRACE("before ssl async_handshake");
@@ -338,6 +344,14 @@ class FixService : public Service {
                                  }});
             }
           } else {
+            // Preserve SendingTime from the standard header before skipping to body.
+            // The default it+5 advances past: SenderCompID, TargetCompID, MsgSeqNum, SendingTime.
+            {
+              auto stIt = it + 4;
+              if (stIt->tag() == hff::tag::SendingTime) {
+                element.insert(stIt->tag(), stIt->value().as_string_view());
+              }
+            }
             it = it + 5;
             while (it->tag() != hffix::tag::CheckSum) {
               element.insert(it->tag(), it->value().as_string_view());
